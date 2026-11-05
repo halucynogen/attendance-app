@@ -45,11 +45,10 @@ jobs:
             exit 1
           }
           unzip -tq attendance-source.zip
-          # Extract to a unique temporary directory to avoid collisions with
-          # previously extracted files committed to the repository.
-          EXTRACT_DIR="$(mktemp -d "$RUNNER_TEMP/attendance-project.XXXXXX")"
-          unzip -oq attendance-source.zip -d "$EXTRACT_DIR"
-          SETTINGS=$(find "$EXTRACT_DIR" -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)
+          rm -rf project
+          mkdir project
+          unzip -q attendance-source.zip -d project
+          SETTINGS=$(find project -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)
           test -n "$SETTINGS" || {
             echo '::error::Gradle settings.gradle(.kts) missing from ZIP'
             exit 1
@@ -57,6 +56,8 @@ jobs:
           APP_ROOT="$(dirname "$SETTINGS")"
           test -f "$APP_ROOT/app/build.gradle.kts"
           grep -Eq 'compileSdk[[:space:]]*=[[:space:]]*36' "$APP_ROOT/app/build.gradle.kts"
+          grep -Eq 'versionCode[[:space:]]*=[[:space:]]*150' "$APP_ROOT/app/build.gradle.kts"
+          grep -Eq 'versionName[[:space:]]*=[[:space:]]*"1.5.0"' "$APP_ROOT/app/build.gradle.kts"
           printf 'APP_ROOT=%s\n' "$APP_ROOT" >> "$GITHUB_ENV"
           echo "Using Android project: $APP_ROOT"
 
@@ -104,7 +105,7 @@ jobs:
       - name: Upload signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: attendance-v1.3-signed-apk
+          name: attendance-v1.5-signed-apk
           path: ${{ env.APP_ROOT }}/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
 
