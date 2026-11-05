@@ -36,31 +36,81 @@ jobs:
           }
           echo 'Android 16 SDK detected'
 
-      - name: Extract attendance-source.zip
+      - name: Locate and verify V1.5 Android project
         shell: bash
         run: |
           set -euo pipefail
-          test -s attendance-source.zip || {
-            echo '::error::Upload attendance-source.zip to the repository top level'
+          ARCHIVE="$GITHUB_WORKSPACE/attendance-source.zip"
+          if [[ ! -s "$ARCHIVE" ]]; then
+            echo '::error::attendance-source.zip 파일이 저장소 루트에 없거나 비어 있습니다.'
+            exit 1
+          fi
+          echo "Source archive: $(sha256sum "$ARCHIVE" | cut -d' ' -f1)"
+          unzip -tq "$ARCHIVE" || {
+            echo '::error::attendance-source.zip 내부 ZIP 데이터가 손상되었습니다.'
             exit 1
           }
-          unzip -tq attendance-source.zip
-          rm -rf project
-          mkdir project
-          unzip -q attendance-source.zip -d project
-          SETTINGS=$(find project -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)
-          test -n "$SETTINGS" || {
-            echo '::error::Gradle settings.gradle(.kts) missing from ZIP'
-            exit 1
-          }
-          APP_ROOT="$(dirname "$SETTINGS")"
-          test -f "$APP_ROOT/app/build.gradle.kts"
-          grep -Eq 'compileSdk[[:space:]]*=[[:space:]]*36' "$APP_ROOT/app/build.gradle.kts"
-          grep -Eq 'versionCode[[:space:]]*=[[:space:]]*150' "$APP_ROOT/app/build.gradle.kts"
-          grep -Eq 'versionName[[:space:]]*=[[:space:]]*"1.5.0"' "$APP_ROOT/app/build.gradle.kts"
-          printf 'APP_ROOT=%s\n' "$APP_ROOT" >> "$GITHUB_ENV"
-          echo "Using Android project: $APP_ROOT"
+          echo 'ZIP integrity passed; locating Android project...'
+          WORK="$(mktemp -d "${RUNNER_TEMP:-/tmp}/attendance-v15.XXXXXX")"
+          unzip -q "$ARCHIVE" -d "$WORK/outer"
 
+          locate_project() {
+            local base="$1" config root
+            while IFS= read -r -d '' config; do
+              root="$(dirname "$config")"
+              if [[ -f "$root/app/build.gradle.kts" ]]; then
+                printf '%s\n' "$root"
+                return 0
+              fi
+            done < <(find "$base" -type f \( -name settings.gradle.kts -o -name settings.gradle \) -print0)
+            return 1
+          }
+
+          PROJECT_ROOT="$(locate_project "$WORK/outer")" || PROJECT_ROOT=''
+          if [[ -z "$PROJECT_ROOT" ]]; then
+            # Also handle an accidentally renamed whole GitHub upload bundle.
+            INNER="$(find "$WORK/outer" -type f -name attendance-source.zip -print -quit)"
+            if [[ -n "$INNER" ]]; then
+              echo 'Upload bundle detected. Extracting nested attendance-source.zip...'
+              unzip -tq "$INNER" || {
+                echo '::error::중첩된 attendance-source.zip이 손상되었습니다.'
+                exit 1
+              }
+              unzip -q "$INNER" -d "$WORK/inner"
+              PROJECT_ROOT="$(locate_project "$WORK/inner")" || PROJECT_ROOT=''
+            fi
+          fi
+          if [[ -z "$PROJECT_ROOT" ]]; then
+            echo '::error::ZIP 안에서 settings.gradle(.kts) 및 app/build.gradle.kts를 찾지 못했습니다.'
+            echo '상위 폴더가 들어간 ZIP은 지원하지만, 앱 소스가 들어 있지 않은 ZIP은 빌드할 수 없습니다.'
+            echo 'ZIP entries (first 40):'
+            unzip -Z1 "$ARCHIVE" | sed -n '1,40p'
+            exit 1
+          fi
+          echo "Project found: ${PROJECT_ROOT#"$WORK"/}"
+          rm -rf project
+          mkdir -p project
+          cp -a "$PROJECT_ROOT/." project/
+
+          GRADLE_FILE='project/app/build.gradle.kts'
+          check_setting() {
+            local pattern="$1" expected="$2"
+            if ! grep -Eq "$pattern" "$GRADLE_FILE"; then
+              echo "::error::V1.5 설정 불일치: $expected. 이전 버전의 ZIP을 올렸는지 확인하세요."
+              grep -nE 'compileSdk|targetSdk|versionCode|versionName' "$GRADLE_FILE" || true
+              exit 1
+            fi
+          }
+          check_setting 'compileSdk[[:space:]]*=[[:space:]]*36' 'compileSdk = 36'
+          check_setting 'targetSdk[[:space:]]*=[[:space:]]*36' 'targetSdk = 36'
+          check_setting 'versionCode[[:space:]]*=[[:space:]]*150' 'versionCode = 150'
+          check_setting 'versionName[[:space:]]*=[[:space:]]*"1\.5\.0"' 'versionName = "1.5.0"'
+          if [[ ! -f project/app/src/main/AndroidManifest.xml ]]; then
+            echo '::error::AndroidManifest.xml 파일이 없습니다.'
+            exit 1
+          fi
+          echo "APP_ROOT=project" >> "$GITHUB_ENV"
+          echo 'V1.5 Android project ready. Starting Gradle build...'
       - name: Restore signing key privately
         shell: bash
         env:
