@@ -38,7 +38,7 @@ jobs:
           }
           echo 'Android SDK 36 is ready'
 
-      - name: Locate and verify V1.5 Android project
+      - name: Locate and verify V1.6 Android project
         shell: bash
         run: |
           set -euo pipefail
@@ -53,7 +53,7 @@ jobs:
             exit 1
           }
           echo 'ZIP integrity passed; locating Android project...'
-          WORK="$(mktemp -d "${RUNNER_TEMP:-/tmp}/attendance-v15.XXXXXX")"
+          WORK="$(mktemp -d "${RUNNER_TEMP:-/tmp}/attendance-v16.XXXXXX")"
           unzip -q "$ARCHIVE" -d "$WORK/outer"
 
           locate_project() {
@@ -98,21 +98,27 @@ jobs:
           check_setting() {
             local pattern="$1" expected="$2"
             if ! grep -Eq "$pattern" "$GRADLE_FILE"; then
-              echo "::error::V1.5 설정 불일치: $expected. 이전 버전의 ZIP을 올렸는지 확인하세요."
+              echo "::error::V1.6 설정 불일치: $expected. 이전 버전의 ZIP을 올렸는지 확인하세요."
               grep -nE 'compileSdk|targetSdk|versionCode|versionName' "$GRADLE_FILE" || true
               exit 1
             fi
           }
           check_setting 'compileSdk[[:space:]]*=[[:space:]]*36' 'compileSdk = 36'
           check_setting 'targetSdk[[:space:]]*=[[:space:]]*36' 'targetSdk = 36'
-          check_setting 'versionCode[[:space:]]*=[[:space:]]*150' 'versionCode = 150'
-          check_setting 'versionName[[:space:]]*=[[:space:]]*"1\.5\.0"' 'versionName = "1.5.0"'
+          check_setting 'versionCode[[:space:]]*=[[:space:]]*160' 'versionCode = 160'
+          check_setting 'versionName[[:space:]]*=[[:space:]]*"1\.6\.0"' 'versionName = "1.6.0"'
           if [[ ! -f project/app/src/main/AndroidManifest.xml ]]; then
             echo '::error::AndroidManifest.xml 파일이 없습니다.'
             exit 1
           fi
           echo "APP_ROOT=project" >> "$GITHUB_ENV"
-          echo 'V1.5 Android project ready. Starting Gradle build...'
+          echo 'V1.6 Android project ready. Starting Gradle build...'
+      - name: Preflight V1.6 sources and resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 project/tests/V16BuildPreflight.py
+
       - name: Build APK
         working-directory: project
         run: gradle --no-daemon --stacktrace :app:assembleDebug
@@ -129,6 +135,6 @@ jobs:
       - name: Downloadable APK
         uses: actions/upload-artifact@v4
         with:
-          name: attendance-v1.5-apk
+          name: attendance-v1.6-apk
           path: project/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
